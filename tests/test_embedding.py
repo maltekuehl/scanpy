@@ -238,3 +238,15 @@ def test_tsne_key_added_deprecated(pbmc_small: AnnData) -> None:
         sc.tl.tsne(pbmc_small, key_added="k")
     assert pbmc_small.obsm.keys() == expected.obsm.keys()
     assert pbmc_small.uns.keys() == expected.uns.keys()
+
+
+@needs.scanpy2
+def test_umap_v2_uses_distances() -> None:
+    """With `ScanpyV2Preview`, UMAP’s graph comes from the kNN distances, not `refine`."""
+    adata = pbmc68k_reduced()
+    embeddings = []
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        for refine in ["binary", None]:
+            sc.pp.neighbors(adata, use="obsm.X_pca", refine=refine)
+            embeddings.append(sc.tl.umap(adata, rng=0, out=True))
+    assert_array_equal(*embeddings)

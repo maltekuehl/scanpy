@@ -338,13 +338,18 @@ def test_v2_one_batch_is_neighbors(adata: AnnData) -> None:
     adata.obs["one"] = "x"
     with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
         expected = sc.pp.neighbors(
-            adata, use="obsm.pca", search=sc.neighbors.search.sklearn(5), out=True
+            adata,
+            use="obsm.pca",
+            search=sc.neighbors.search.sklearn(5),
+            refine="umap",
+            out=True,
         )
         actual = sc.pp.bbknn(
             adata,
             use="obsm.pca",
             batches="obs.one",
             neighbors_within_batch=5,
+            refine="umap",
             trim=0,
             out=True,
         )

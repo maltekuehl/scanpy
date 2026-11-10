@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from ..._compat import CSRBase
 
-__all__ = ["gauss", "phenograph", "seurat", "umap"]
+__all__ = ["binary", "gauss", "phenograph", "seurat", "umap"]
 
 
 def umap(d: CSRBase, /) -> CSRBase:
@@ -149,6 +149,15 @@ def seurat(d: CSRBase, /, *, prune: float = 1 / 15) -> CSRBase:
     w.data[(w.data < prune) | (row == w.indices)] = 0
     w.eliminate_zeros()
     return w
+
+
+def binary(d: CSRBase, /) -> CSRBase:
+    """Unweighted kNN graph.
+
+    Each edge has weight 1, and an edge in either direction is kept.
+    """
+    a = _pattern(d)
+    return a.maximum(a.T)
 
 
 def _pattern(d: CSRBase, /) -> CSRBase:

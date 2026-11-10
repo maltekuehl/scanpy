@@ -42,7 +42,7 @@ def bbknn(
     batches: AdRef | str,
     neighbors_within_batch: int = 3,
     search: KnnTransformerLike | None = None,
-    refine: _Refine | _RefineFn = "umap",
+    refine: _Refine | _RefineFn | None = "binary",
     trim: int | None = None,
     out: GraphAcc | str | NeighborsOut | bool = False,
 ) -> NeighborsResult | None:
@@ -80,7 +80,8 @@ def bbknn(
         Derives connectivities from the kNN distances
         (a :class:`~scipy.sparse.csr_array` without self-loops, each row sorted by distance).
         A callable, or the name of a function in :mod:`scanpy.neighbors.refine`:
-        `'umap'`, `'gauss'`, `'phenograph'`, or `'seurat'`.
+        `'binary'`, `'umap'`, `'gauss'`, `'phenograph'`, or `'seurat'`.
+        If `None`, skip it: there are no connectivities to trim.
     trim
         Keep each observation’s this many strongest connectivities:
         an edge is removed if it is weaker than either observation’s `trim`-th strongest one.
@@ -152,17 +153,19 @@ def bbknn(
     )
 
     # refine, and trim
-    connectivities = sparse.csr_array(refine_fn(d))  # noqa: TID251
     n_neighbors = int(np.diff(d.indptr).max(initial=0))
     trim = 10 * n_neighbors if trim is None else trim
-    if trim > 0:
-        connectivities = _trim(connectivities, trim)
+    connectivities = None
+    if refine_fn is not None:
+        connectivities = sparse.csr_array(refine_fn(d))  # noqa: TID251
+        if trim > 0:
+            connectivities = _trim(connectivities, trim)
     vals = _result(connectivities, d)
 
     params: BbknnParams = dict(
         n_neighbors=n_neighbors,
         search=_name("sklearn" if search is None else search),
-        refine=_name(refine),
+        **({} if refine is None else dict(refine=_name(refine))),
         metric=getattr(transformer, "metric", None),
         **_use_to_uns(use, rep=True),
         batches=_ref_to_uns(batches, labels),

@@ -45,7 +45,7 @@ def neighbors(
     use: RepAcc | str | None = None,
     distances: np.ndarray | SpBase | None = None,
     search: KnnTransformerLike | _Search | None = None,
-    refine: _Refine | _RefineFn = "umap",
+    refine: _Refine | _RefineFn | None = "binary",
     out: GraphAcc | str | NeighborsOut | bool = False,
 ) -> NeighborsResult | None:
     r"""Compute a neighborhood graph of observations.
@@ -81,7 +81,8 @@ def neighbors(
         Derives connectivities from the kNN distances
         (a :class:`~scipy.sparse.csr_array` without self-loops, each row sorted by distance).
         A callable, or the name of a function in :mod:`scanpy.neighbors.refine`:
-        `'umap'`, `'gauss'`, `'phenograph'`, or `'seurat'`.
+        `'binary'`, `'umap'`, `'gauss'`, `'phenograph'`, or `'seurat'`.
+        If `None`, skip it: there are no connectivities.
     {out}
 
     Returns
@@ -129,21 +130,21 @@ def neighbors(
         transformer, d = None, _knn_graph(distances)
 
     # refine
-    vals = _result(refine_fn(d), d)
+    vals = _result(None if refine_fn is None else refine_fn(d), d)
 
     params: NeighborsParams = dict(
         n_neighbors=int(np.diff(d.indptr).max(initial=0)),
         **({} if search is None else dict(search=_name(search))),
-        refine=_name(refine),
+        **({} if refine is None else dict(refine=_name(refine))),
         metric=getattr(transformer, "metric", None),
         **_use_to_uns(use, rep=True),
     )
     return _write(adata, vals, dests, start=start, params=params)
 
 
-def _refine_fn(refine: _Refine | _RefineFn, /) -> _RefineFn:
+def _refine_fn(refine: _Refine | _RefineFn | None, /) -> _RefineFn | None:
     """Get the refiner named `refine`, or `refine` itself."""
-    if not isinstance(refine, str):
+    if refine is None or callable(refine):
         return refine
     if refine not in refiners.__all__:
         msg = f"`refine` needs to be one of {refiners.__all__} or a callable, got {refine!r}."
@@ -151,10 +152,14 @@ def _refine_fn(refine: _Refine | _RefineFn, /) -> _RefineFn:
     return getattr(refiners, refine)
 
 
-def _result(connectivities: SpBase, distances: CSRBase, /) -> NeighborsResult:
+def _result(
+    connectivities: SpBase | None, distances: CSRBase, /
+) -> NeighborsResult[CSRBase | None]:
     """Get the outputs as float32 CSR arrays, keeping the order of `distances`’ rows."""
     return NeighborsResult(
-        sparse.csr_array(connectivities, dtype=np.float32),  # noqa: TID251
+        None
+        if connectivities is None
+        else sparse.csr_array(connectivities, dtype=np.float32),  # noqa: TID251
         sparse.csr_array(  # noqa: TID251
             (distances.data.astype(np.float32), distances.indices, distances.indptr),
             shape=distances.shape,
@@ -164,7 +169,7 @@ def _result(connectivities: SpBase, distances: CSRBase, /) -> NeighborsResult:
 
 def _write[P: NeighborsParams](
     adata: AnnData,
-    vals: NeighborsResult,
+    vals: NeighborsResult[CSRBase | None],
     dests: tuple[str | None, NeighborsResult[_SetRep | None]] | Literal[True],
     *,
     start: datetime,
@@ -175,6 +180,8 @@ def _write[P: NeighborsParams](
         logg.info("    finished", time=start)
         return vals
     key, dests = dests
+    if vals.connectivities is None:
+        dests = dests._replace(connectivities=None)
     key, neighbors_dict = _metadata(key, dests, params)
     adata.uns[key] = neighbors_dict
     _write_dests(adata, vals, dests)

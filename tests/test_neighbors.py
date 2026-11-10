@@ -570,3 +570,24 @@ def test_v2_seurat() -> None:
             adata, use="obsm.X_pca", search=search.sklearn(k), refine="seurat", out=True
         )
     np.testing.assert_allclose(res.connectivities.toarray(), expected, rtol=1e-6)
+
+
+@needs.scanpy2
+def test_v2_binary() -> None:
+    """Each kNN edge, in either direction, has weight 1."""
+    adata = pbmc68k_reduced()
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        res = sc.pp.neighbors(adata, use="obsm.X_pca", refine="binary", out=True)
+    edges = res.distances.toarray() > 0
+    np.testing.assert_array_equal(res.connectivities.toarray(), edges | edges.T)
+
+
+@needs.scanpy2
+def test_v2_refine_none() -> None:
+    """`refine=None` skips refining: only the kNN distances are written."""
+    adata = pbmc68k_reduced()
+    del adata.obsp["connectivities"], adata.obsp["distances"]
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        sc.pp.neighbors(adata, use="obsm.X_pca", refine=None)
+    assert set(adata.obsp) == {"distances"}
+    assert "connectivities_key" not in adata.uns["neighbors"]

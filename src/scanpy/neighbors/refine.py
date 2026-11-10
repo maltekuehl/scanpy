@@ -6,6 +6,6 @@ each row sorted by distance, with any number of neighbors per observation.
 
 from __future__ import annotations
 
-from ._v2._refine import gauss, phenograph, seurat, umap
+from ._v2._refine import binary, gauss, phenograph, seurat, umap
 
-__all__ = ["gauss", "phenograph", "seurat", "umap"]
+__all__ = ["binary", "gauss", "phenograph", "seurat", "umap"]

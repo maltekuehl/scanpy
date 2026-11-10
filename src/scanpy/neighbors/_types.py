@@ -36,7 +36,7 @@ __all__ = [
 type RPForestDict = Mapping[str, Mapping[str, np.ndarray]]
 
 type _Method = Literal["umap", "gauss", "jaccard"]
-type _Refine = Literal["umap", "gauss", "phenograph", "seurat"]
+type _Refine = Literal["umap", "gauss", "phenograph", "seurat", "binary"]
 type _Search = Literal["sklearn"]
 type _KnownTransformer = Literal["pynndescent", "sklearn"]
 

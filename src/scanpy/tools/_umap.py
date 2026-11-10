@@ -9,7 +9,7 @@ from sklearn.utils import check_array
 from .. import logging as logg
 from .._docs import DEPR_KEY_ADDED, DEPR_NEIGHBORS_KEY, doc_out_key, doc_rng
 from .._keys import _embedding_keys
-from .._settings import Default, settings
+from .._settings import Default, Preset, settings
 from .._utils import _doc_params
 from .._utils.random import (
     _accepts_legacy_random_state,
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from anndata import AnnData
 
     from .._compat import CSBase
+    from .._utils import NeighborsView
     from .._utils.random import RNGLike, SeedLike
     from ..get._types import GraphAcc, RepAcc
 
@@ -97,6 +98,10 @@ def umap(  # noqa: PLR0913
     distribution of distances in the high-dimensional space.
     We use the implementation of umap-learn_ :cite:p:`McInnes2018`.
     For a few comparisons of UMAP with tSNE, see :cite:t:`Becht2018`.
+
+    If :attr:`scanpy.settings.preset` is :attr:`~scanpy.Preset.ScanpyV2Preview`,
+    the graph is derived from the neighbors’ distances by :func:`scanpy.neighbors.refine.umap`,
+    whatever connectivities :func:`~scanpy.pp.neighbors` stored.
 
     .. _umap-learn: https://github.com/lmcinnes/umap
 
@@ -186,18 +191,12 @@ def umap(  # noqa: PLR0913
     key = _out_key(out, key_added, kind="obsm", default=Default())
 
     neighbors = _neighbors_view(adata, use, neighbors_key)
-    if neighbors is None or "connectivities" not in neighbors:
-        msg = "Did not find a neighborhood graph. Run `sc.pp.neighbors` first."
-        raise ValueError(msg)
-    conns = neighbors["connectivities"]
+    conns = _umap_graph(neighbors)
     neigh_params = neighbors["params"] if "params" in neighbors else {}  # noqa: SIM401 (no `.get`)
 
     start = logg.info("computing UMAP")
 
-    if (
-        neigh_params
-        and neigh_params.get("refine", neigh_params.get("method")) != "umap"
-    ):
+    if neigh_params and neigh_params.get("method", "umap") != "umap":
         logg.warning(
             f'.obsp["{neighbors["connectivities_key"]}"] have not been computed using umap'
         )
@@ -266,6 +265,26 @@ def umap(  # noqa: PLR0913
         ),
     )
     return None
+
+
+def _umap_graph(neighbors: NeighborsView | None, /) -> CSBase:
+    """Get the weighted graph that UMAP lays out.
+
+    If `preset` is `ScanpyV2Preview`, it’s derived from the kNN distances,
+    otherwise it’s the connectivities.
+    """
+    if settings.preset is Preset.ScanpyV2Preview:
+        from ..neighbors._v2._graph import _knn_graph
+        from ..neighbors.refine import umap as fuzzy_simplicial_set
+
+        if neighbors is None or "distances" not in neighbors:
+            msg = "Did not find kNN distances. Run `sc.pp.neighbors` first."
+            raise ValueError(msg)
+        return fuzzy_simplicial_set(_knn_graph(neighbors["distances"]))
+    if neighbors is None or "connectivities" not in neighbors:
+        msg = "Did not find a neighborhood graph. Run `sc.pp.neighbors` first."
+        raise ValueError(msg)
+    return neighbors["connectivities"]
 
 
 def _umap_data(
