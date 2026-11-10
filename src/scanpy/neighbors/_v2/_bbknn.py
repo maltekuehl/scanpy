@@ -126,7 +126,11 @@ def bbknn(
     edges = []
     for batch in np.unique(labels):
         idx = np.flatnonzero(labels == batch)
-        found = sparse.coo_array(clone(transformer).fit(x[idx]).transform(x))
+        try:
+            found = sparse.coo_array(clone(transformer).fit(x[idx]).transform(x))
+        except Exception as e:
+            e.add_note(f"while searching batch {batch!r} ({len(idx)} observations)")
+            raise
         found = sparse.coo_array(
             (found.data, (found.row, idx[found.col])), shape=(n_obs, n_obs)
         )
