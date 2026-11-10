@@ -39,7 +39,7 @@ def bbknn(
     adata: AnnData,
     *,
     use: RepAcc | str,
-    batches: AdRef | str,
+    batch: AdRef | str,
     neighbors_within_batch: int = 3,
     search: KnnTransformerLike | None = None,
     refine: _Refine | _RefineFn | None = "binary",
@@ -63,7 +63,7 @@ def bbknn(
         a :class:`~anndata.acc.LayerAcc` (e.g. `A.X`, `A.layers[...]`) or
         :class:`~anndata.acc.MultiAcc` (e.g. `A.obsm[...]`).
         :class:`str`\ s are :meth:`~anndata.acc.AdAcc.resolve`\ d, e.g. `'obsm.pca'`.
-    batches
+    batch
         The batch of each observation, e.g. `A.obs['batch']`.
         :class:`str`\ s are :meth:`~anndata.acc.AdAcc.resolve`\ d, e.g. `'obs.batch'`.
     neighbors_within_batch
@@ -114,9 +114,9 @@ def bbknn(
         out, None, dests=_neighbors_dests, kinds=NEIGHBORS_KINDS, uns=True
     )
     use = _resolve_obs(use, rep=True)
-    if not isinstance(batches, AdRef):
-        batches = A.resolve(batches, vec=True)
-    labels = np.asarray(adata[batches])
+    if not isinstance(batch, AdRef):
+        batch = A.resolve(batch, vec=True)
+    labels = np.asarray(adata[batch])
     transformer = searches.sklearn(neighbors_within_batch) if search is None else search
 
     start = logg.info("computing batch balanced neighbors")
@@ -125,18 +125,18 @@ def bbknn(
     x = _get_arr(adata, use)
     n_obs = adata.n_obs
     edges = []
-    for batch in np.unique(labels):
-        idx = np.flatnonzero(labels == batch)
+    for label in np.unique(labels):
+        idx = np.flatnonzero(labels == label)
         try:
             found = sparse.coo_array(clone(transformer).fit(x[idx]).transform(x))
         except Exception as e:
-            e.add_note(f"while searching batch {batch!r} ({len(idx)} observations)")
+            e.add_note(f"while searching batch {label!r} ({len(idx)} observations)")
             raise
         found = sparse.coo_array(
             (found.data, (found.row, idx[found.col])), shape=(n_obs, n_obs)
         )
         edges.append(_nearest(_knn_graph(found), neighbors_within_batch).tocoo())
-        logg.debug(f"    computed neighbors within batch {batch!r}")
+        logg.debug(f"    computed neighbors within batch {label!r}")
 
     # merge the batches into one kNN graph
     d = _knn_graph(
@@ -168,7 +168,7 @@ def bbknn(
         **({} if refine is None else dict(refine=_name(refine))),
         metric=getattr(transformer, "metric", None),
         **_use_to_uns(use, rep=True),
-        batches=_ref_to_uns(batches, labels),
+        batch=_ref_to_uns(batch, labels),
         neighbors_within_batch=neighbors_within_batch,
         trim=trim,
     )

@@ -132,6 +132,6 @@ class NeighborsParams(TypedDict):
 
 
 class BbknnParams(NeighborsParams):
-    batches: str | NDArray  # see `scanpy.get._uns._ref_to_uns`
+    batch: str | NDArray  # see `scanpy.get._uns._ref_to_uns`
     neighbors_within_batch: int
     trim: int
