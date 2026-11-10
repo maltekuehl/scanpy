@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from ..neighbors import neighbors
+from typing import TYPE_CHECKING
+
 from ..neighbors._bbknn import bbknn
 from ..neighbors._types import NeighborsOut, NeighborsResult
 from ._combat import combat
@@ -30,6 +31,25 @@ from ._simple import (
     sample,
     sqrt,
 )
+
+if TYPE_CHECKING:
+    from typing import Any
+
+    from ..neighbors import neighbors
+
+
+def __getattr__(name: str) -> Any:
+    if name == "neighbors":
+        from .._settings import Preset, settings
+
+        if settings.preset is Preset.ScanpyV2Preview:
+            from ..neighbors._v2 import neighbors
+        else:
+            from ..neighbors import neighbors
+        return neighbors
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
 
 __all__ = [
     "HashsoloOut",

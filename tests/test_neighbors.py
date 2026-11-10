@@ -7,11 +7,13 @@ import numpy as np
 import pytest
 from anndata import AnnData
 from scipy import sparse
-from sklearn.neighbors import KNeighborsTransformer
+from sklearn.metrics import pairwise_distances
+from sklearn.neighbors import KNeighborsTransformer, RadiusNeighborsTransformer
 
 import scanpy as sc
 from scanpy import Neighbors
 from scanpy._compat import CSBase
+from scanpy.neighbors import search
 from scanpy.neighbors._common import (
     _get_indices_distances_from_rect_matrix,
     _get_indices_distances_from_sparse_matrix,
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
     from scanpy.get._types import RepAcc
+    from scanpy.neighbors._types import _Method
 
 if TYPE_CHECKING or hasattr(anndata, "acc"):
     from anndata.acc import A
@@ -350,8 +353,6 @@ def test_use_stored(
     "preset",
     [
         sc.Preset.ScanpyV1,
-        # only the v2 preset needs the full extra, see `Preset.check`
-        pytest.param(sc.Preset.ScanpyV2Preview, marks=needs.scanpy2),
     ],
 )
 def test_use_rep_str_is_legacy(
@@ -498,3 +499,74 @@ def test_indices_distances_rect_matrix_padded() -> None:
 
     np.testing.assert_array_equal(indices, [[2, 0], [2, 3], [3, 0]])
     np.testing.assert_array_equal(distances, [[1, 2], [1, 2], [1, 4]])
+
+
+@needs.scanpy2
+@pytest.mark.parametrize(
+    ("refine", "method"),
+    [("umap", "umap"), ("gauss", "gauss"), ("phenograph", "jaccard")],
+)
+def test_v2_matches_v1(refine: str, method: _Method) -> None:
+    """V2 `n_neighbors` excludes the observation itself; the graphs are the same."""
+    adata = pbmc68k_reduced()
+    v1 = sc.pp.neighbors(adata, 16, transformer="sklearn", method=method, out=True)
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        v2 = sc.pp.neighbors(
+            adata, use="obsm.X_pca", search=search.sklearn(15), refine=refine, out=True
+        )
+    for old, new in zip(v1, v2, strict=True):
+        np.testing.assert_allclose(old.toarray(), new.toarray(), atol=1e-6)
+
+
+@needs.scanpy2
+def test_v2_variable_degree() -> None:
+    """`search` may find any number of neighbors, and `refine` may be a callable."""
+    adata = pbmc68k_reduced()
+    d = pairwise_distances(adata.obsm["X_pca"])
+    radius = np.median(np.sort(d, axis=1)[:, 10])
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        res = sc.pp.neighbors(
+            adata,
+            use="obsm.X_pca",
+            search=RadiusNeighborsTransformer(radius=radius),
+            refine=lambda d: d.copy(),
+            out=True,
+        )
+    n_found = np.diff(res.distances.indptr)
+    np.testing.assert_array_equal(n_found, (d <= radius).sum(axis=1) - 1)
+    assert len(np.unique(n_found)) > 1
+    assert not res.distances.diagonal().any()
+    np.testing.assert_array_equal(res.connectivities.toarray(), res.distances.toarray())
+
+
+@needs.scanpy2
+def test_v2_distances() -> None:
+    """Precomputed `distances` give the same graphs as the search they came from."""
+    adata = pbmc68k_reduced()
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        expected = sc.pp.neighbors(adata, use="obsm.X_pca", out=True)
+        actual = sc.pp.neighbors(adata, distances=expected.distances, out=True)
+    for e, a in zip(expected, actual, strict=True):
+        np.testing.assert_array_equal(e.toarray(), a.toarray())
+
+
+@needs.scanpy2
+def test_v2_seurat() -> None:
+    """Neighbor sets are the k neighbors plus the observation itself; Jaccard; pruned below 1/15."""
+    adata = pbmc68k_reduced()
+    k = 10
+    x = adata.obsm["X_pca"]
+    idx = KNeighborsTransformer().fit(x).kneighbors(x, k + 1, return_distance=False)
+    sets = sparse.csr_array(  # noqa: TID251
+        (np.ones(idx.size), idx.ravel(), np.arange(0, idx.size + 1, k + 1)),
+        shape=(adata.n_obs,) * 2,
+    )
+    shared = (sets @ sets.T).toarray()
+    expected = shared / (2 * (k + 1) - shared)
+    expected[expected < 1 / 15] = 0
+    np.fill_diagonal(expected, 0)
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        res = sc.pp.neighbors(
+            adata, use="obsm.X_pca", search=search.sklearn(k), refine="seurat", out=True
+        )
+    np.testing.assert_allclose(res.connectivities.toarray(), expected, rtol=1e-6)

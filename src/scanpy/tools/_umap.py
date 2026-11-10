@@ -194,7 +194,10 @@ def umap(  # noqa: PLR0913
 
     start = logg.info("computing UMAP")
 
-    if neigh_params and neigh_params["method"] != "umap":
+    if (
+        neigh_params
+        and neigh_params.get("refine", neigh_params.get("method")) != "umap"
+    ):
         logg.warning(
             f'.obsp["{neighbors["connectivities_key"]}"] have not been computed using umap'
         )

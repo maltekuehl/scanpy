@@ -35,6 +35,8 @@ from ..get._out import (
 from ..get._uns import _use_to_uns
 from ..get._use import _resolve_obs
 from . import _connectivity
+from . import refine as refine
+from . import search as search
 from ._common import (
     NEIGHBORS_KINDS,
     _get_indices_distances_from_dense_matrix,

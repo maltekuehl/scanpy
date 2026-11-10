@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, TypedDict
 
 import numpy as np
 
-from .._compat import CSRBase  # runtime: `NeighborsResult`’s default
+from .._compat import CSBase, CSRBase  # runtime: `NeighborsResult`’s default
 
 if TYPE_CHECKING:
     from typing import Any, NotRequired, Self
@@ -28,14 +28,20 @@ __all__ = [
     "_MetricFn",
     "_MetricScipySpatial",
     "_MetricSparseCapable",
+    "_Refine",
+    "_RefineFn",
+    "_Search",
 ]
 
 type RPForestDict = Mapping[str, Mapping[str, np.ndarray]]
 
 type _Method = Literal["umap", "gauss", "jaccard"]
+type _Refine = Literal["umap", "gauss", "phenograph", "seurat"]
+type _Search = Literal["sklearn"]
 type _KnownTransformer = Literal["pynndescent", "sklearn"]
 
 type _MetricFn = Callable[[np.ndarray, np.ndarray], float]
+type _RefineFn = Callable[[CSRBase], CSBase]
 # from sklearn.metrics.pairwise_distances.__doc__:
 type _MetricSparseCapable = Literal[
     "cityblock", "cosine", "euclidean", "l1", "l2", "manhattan"
@@ -114,7 +120,9 @@ class NeighborsDict[P: NeighborsParams](TypedDict):
 
 class NeighborsParams(TypedDict):
     n_neighbors: int
-    method: _Method
+    method: NotRequired[_Method]
+    search: NotRequired[str]
+    refine: NotRequired[str]
     metric: _Metric | _MetricFn | None
     random_state: NotRequired[_LegacyRandom]
     metric_kwds: NotRequired[Mapping[str, Any]]
