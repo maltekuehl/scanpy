@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..neighbors._bbknn import bbknn
 from ..neighbors._types import NeighborsOut, NeighborsResult
 from ._combat import combat
 from ._deprecated.sampling import subsample
@@ -36,17 +35,20 @@ if TYPE_CHECKING:
     from typing import Any
 
     from ..neighbors import neighbors
+    from ..neighbors._bbknn import bbknn
 
 
 def __getattr__(name: str) -> Any:
-    if name == "neighbors":
+    if name in {"bbknn", "neighbors"}:
         from .._settings import Preset, settings
 
         if settings.preset is Preset.ScanpyV2Preview:
-            from ..neighbors._v2 import neighbors
+            from ..neighbors import _v2 as module
+        elif name == "neighbors":
+            from .. import neighbors as module
         else:
-            from ..neighbors import neighbors
-        return neighbors
+            from ..neighbors import _bbknn as module
+        return getattr(module, name)
     msg = f"module {__name__!r} has no attribute {name!r}"
     raise AttributeError(msg)
 

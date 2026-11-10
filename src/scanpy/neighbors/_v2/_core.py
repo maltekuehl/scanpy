@@ -13,7 +13,7 @@ from ..._utils import _doc_params
 from ...get._out import _out_dests, _write_dests
 from ...get._uns import _use_to_uns
 from ...get._use import _get_arr, _resolve_obs
-from .._common import NEIGHBORS_KINDS, _get_metadata, _neighbors_dests
+from .._common import NEIGHBORS_KINDS, _metadata, _neighbors_dests
 from .._doc import doc_out
 from .._types import NeighborsResult
 from . import _refine as refiners
@@ -21,11 +21,21 @@ from . import _search as searches
 from ._graph import _knn_graph
 
 if TYPE_CHECKING:
+    from datetime import datetime
+    from typing import Literal
+
     from anndata import AnnData
 
-    from ..._compat import SpBase
-    from ...get._types import GraphAcc, RepAcc
-    from .._types import KnnTransformerLike, NeighborsOut, _Refine, _RefineFn, _Search
+    from ..._compat import CSRBase, SpBase
+    from ...get._types import GraphAcc, RepAcc, _SetRep
+    from .._types import (
+        KnnTransformerLike,
+        NeighborsOut,
+        NeighborsParams,
+        _Refine,
+        _RefineFn,
+        _Search,
+    )
 
 
 @_doc_params(out=doc_out)
@@ -91,9 +101,7 @@ def neighbors(
     if isinstance(search, str) and search not in searches.__all__:
         msg = f"`search` needs to be one of {searches.__all__} or a transformer, got {search!r}."
         raise ValueError(msg)
-    if isinstance(refine, str) and refine not in refiners.__all__:
-        msg = f"`refine` needs to be one of {refiners.__all__} or a callable, got {refine!r}."
-        raise ValueError(msg)
+    refine_fn = _refine_fn(refine)
     dests = _out_dests(
         out, None, dests=_neighbors_dests, kinds=NEIGHBORS_KINDS, uns=True
     )
@@ -121,28 +129,53 @@ def neighbors(
         transformer, d = None, _knn_graph(distances)
 
     # refine
-    refine_fn = getattr(refiners, refine) if isinstance(refine, str) else refine
-    vals = NeighborsResult(
-        sparse.csr_array(refine_fn(d), dtype=np.float32),  # noqa: TID251
-        sparse.csr_array(  # noqa: TID251
-            (d.data.astype(np.float32), d.indices, d.indptr), shape=d.shape
-        ),
-    )
-    if dests is True:
-        logg.info("    finished", time=start)
-        return vals
+    vals = _result(refine_fn(d), d)
 
-    # write to `adata`
-    key, dests = dests
-    key, neighbors_dict = _get_metadata(
-        key,
-        dests,
+    params: NeighborsParams = dict(
         n_neighbors=int(np.diff(d.indptr).max(initial=0)),
         **({} if search is None else dict(search=_name(search))),
         refine=_name(refine),
         metric=getattr(transformer, "metric", None),
         **_use_to_uns(use, rep=True),
     )
+    return _write(adata, vals, dests, start=start, params=params)
+
+
+def _refine_fn(refine: _Refine | _RefineFn, /) -> _RefineFn:
+    """Get the refiner named `refine`, or `refine` itself."""
+    if not isinstance(refine, str):
+        return refine
+    if refine not in refiners.__all__:
+        msg = f"`refine` needs to be one of {refiners.__all__} or a callable, got {refine!r}."
+        raise ValueError(msg)
+    return getattr(refiners, refine)
+
+
+def _result(connectivities: SpBase, distances: CSRBase, /) -> NeighborsResult:
+    """Get the outputs as float32 CSR arrays, keeping the order of `distances`’ rows."""
+    return NeighborsResult(
+        sparse.csr_array(connectivities, dtype=np.float32),  # noqa: TID251
+        sparse.csr_array(  # noqa: TID251
+            (distances.data.astype(np.float32), distances.indices, distances.indptr),
+            shape=distances.shape,
+        ),
+    )
+
+
+def _write[P: NeighborsParams](
+    adata: AnnData,
+    vals: NeighborsResult,
+    dests: tuple[str | None, NeighborsResult[_SetRep | None]] | Literal[True],
+    *,
+    start: datetime,
+    params: P,
+) -> NeighborsResult | None:
+    """Return `vals` if `out=True`, else write them and `params` to `adata`."""
+    if dests is True:
+        logg.info("    finished", time=start)
+        return vals
+    key, dests = dests
+    key, neighbors_dict = _metadata(key, dests, params)
     adata.uns[key] = neighbors_dict
     _write_dests(adata, vals, dests)
 

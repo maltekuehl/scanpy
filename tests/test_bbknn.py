@@ -330,3 +330,40 @@ def test_bbknn_errors(
 ) -> None:
     with pytest.raises(error, match=pattern):
         sc.pp.bbknn(adata, **{"batches": "obs.batch", **kwargs})
+
+
+@needs.scanpy2
+def test_v2_one_batch_is_neighbors(adata: AnnData) -> None:
+    """With one batch and no trimming, bbknn is `pp.neighbors`."""
+    adata.obs["one"] = "x"
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        expected = sc.pp.neighbors(
+            adata, use="obsm.pca", search=sc.neighbors.search.sklearn(5), out=True
+        )
+        actual = sc.pp.bbknn(
+            adata,
+            use="obsm.pca",
+            batches="obs.one",
+            neighbors_within_batch=5,
+            trim=0,
+            out=True,
+        )
+    for e, a in zip(expected, actual, strict=True):
+        np.testing.assert_array_equal(e.toarray(), a.toarray())
+
+
+@needs.scanpy2
+def test_v2_is_batch_balanced(adata: AnnData) -> None:
+    """Each observation has `neighbors_within_batch` neighbors in each batch, not itself."""
+    k = 3
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        d = sc.pp.bbknn(
+            adata,
+            use="obsm.pca",
+            batches="obs.batch",
+            neighbors_within_batch=k,
+            out=True,
+        ).distances
+    assert not d.diagonal().any()
+    for batch in np.unique(BATCHES):
+        np.testing.assert_array_equal(n_per_row(d[:, batch == BATCHES]), k)

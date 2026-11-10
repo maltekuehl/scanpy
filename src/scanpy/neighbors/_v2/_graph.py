@@ -40,3 +40,14 @@ def _knn_graph(d: np.ndarray | SpBase, /) -> CSRBase:
     return sparse.csr_array(  # noqa: TID251
         (dist, col.astype(idx_dtype), indptr.astype(idx_dtype)), shape=d.shape
     )
+
+
+def _nearest(g: CSRBase, /, n_neighbors: int) -> CSRBase:
+    """Keep each observation’s `n_neighbors` nearest neighbors in a graph from :func:`_knn_graph`."""
+    counts = np.diff(g.indptr)
+    rank = np.arange(g.nnz) - np.repeat(g.indptr[:-1], counts)
+    keep = rank < n_neighbors
+    indptr = np.r_[0, np.cumsum(np.minimum(counts, n_neighbors))]
+    return sparse.csr_array(  # noqa: TID251
+        (g.data[keep], g.indices[keep], indptr.astype(g.indptr.dtype)), shape=g.shape
+    )
