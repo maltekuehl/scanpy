@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -82,6 +84,8 @@ def neighbors(
         (a :class:`~scipy.sparse.csr_array` without self-loops, each row sorted by distance).
         A callable, or the name of a function in :mod:`scanpy.neighbors.refine`:
         `'binary'`, `'umap'`, `'gauss'`, `'phenograph'`, or `'seurat'`.
+        Configure one with :func:`functools.partial`,
+        e.g. `partial(sc.neighbors.refine.umap, local_connectivity=2)`.
         If `None`, skip it: there are no connectivities.
     {out}
 
@@ -96,6 +100,8 @@ def neighbors(
         Distances to each observation’s neighbors, each row sorted by distance.
     `adata.uns['neighbors']` : :class:`dict`
         neighbors parameters, and the `.obsp` keys the matrices were written to.
+        The parameters include the settings of `search` (from its `get_params`)
+        and of `refine` (from a :func:`functools.partial`).
 
     """
     # check arguments
@@ -134,9 +140,9 @@ def neighbors(
 
     params: NeighborsParams = dict(
         n_neighbors=int(np.diff(d.indptr).max(initial=0)),
-        **({} if search is None else dict(search=_name(search))),
-        **({} if refine is None else dict(refine=_name(refine))),
-        metric=getattr(transformer, "metric", None),
+        **_described("search", search, transformer),
+        **_described("refine", refine, refine_fn),
+        **_metric(transformer),
         **_use_to_uns(use, rep=True),
     )
     return _write(adata, vals, dests, start=start, params=params)
@@ -198,8 +204,46 @@ def _write[P: NeighborsParams](
     return None
 
 
+def _described(kind: str, given: object, obj: object) -> dict[str, object]:
+    """Describe `search` or `refine` for `.uns`: its name, and its settings if available."""
+    if given is None:
+        return {}
+    if isinstance(obj, partial):
+        settings = obj.keywords
+    elif hasattr(obj, "get_params"):
+        settings = obj.get_params(deep=False)
+    else:
+        settings = {}
+    return {
+        kind: _name(given),
+        **({f"{kind}_params": _storable(settings)} if settings else {}),
+    }
+
+
+def _metric(transformer: KnnTransformerLike | None) -> dict[str, object]:
+    """Get the search’s metric for `.uns`, as read by e.g. :func:`~scanpy.tl.umap`."""
+    return (
+        {"metric": _storable(transformer.metric)}
+        if hasattr(transformer, "metric")
+        else {}
+    )
+
+
 def _name(obj: object) -> str:
     """Get a string to store for `search` or `refine` in `.uns`."""
     if isinstance(obj, str):
         return obj
+    if isinstance(obj, partial):
+        obj = obj.func
+    if getattr(refiners, getattr(obj, "__name__", ""), None) is obj:
+        return obj.__name__
     return fullname(obj if hasattr(obj, "__qualname__") else type(obj))
+
+
+def _storable(value: object) -> object:
+    """Get a setting in a form that can be written to `.uns`: callables by name, other objects by `repr`."""
+    if value is None or isinstance(value, str | int | float | np.generic):
+        return value
+    if isinstance(value, Mapping):
+        return {k: _storable(v) for k, v in value.items()}
+    return _name(value) if callable(value) else repr(value)

@@ -122,8 +122,10 @@ class NeighborsParams(TypedDict):
     n_neighbors: int
     method: NotRequired[_Method]
     search: NotRequired[str]
+    search_params: NotRequired[dict[str, object]]
     refine: NotRequired[str]
-    metric: _Metric | _MetricFn | None
+    refine_params: NotRequired[dict[str, object]]
+    metric: NotRequired[_Metric | _MetricFn | str]
     random_state: NotRequired[_LegacyRandom]
     metric_kwds: NotRequired[Mapping[str, Any]]
     use_rep: NotRequired[str]  # see `scanpy.get._uns._use_to_uns`

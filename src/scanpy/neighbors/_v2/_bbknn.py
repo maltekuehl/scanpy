@@ -16,7 +16,7 @@ from .._bbknn import _trim
 from .._common import NEIGHBORS_KINDS, _neighbors_dests
 from .._doc import doc_out
 from . import _search as searches
-from ._core import _name, _refine_fn, _result, _write
+from ._core import _described, _metric, _refine_fn, _result, _write
 from ._graph import _knn_graph, _nearest
 
 if TYPE_CHECKING:
@@ -81,6 +81,8 @@ def bbknn(
         (a :class:`~scipy.sparse.csr_array` without self-loops, each row sorted by distance).
         A callable, or the name of a function in :mod:`scanpy.neighbors.refine`:
         `'binary'`, `'umap'`, `'gauss'`, `'phenograph'`, or `'seurat'`.
+        Configure one with :func:`functools.partial`,
+        e.g. `partial(sc.neighbors.refine.umap, local_connectivity=2)`.
         If `None`, skip it: there are no connectivities to trim.
     trim
         Keep each observation’s this many strongest connectivities:
@@ -100,6 +102,8 @@ def bbknn(
         Distances to each observation’s neighbors, each row sorted by distance.
     `adata.uns['neighbors']` : :class:`dict`
         neighbors parameters, and the `.obsp` keys the matrices were written to.
+        The parameters include the settings of `search` (from its `get_params`)
+        and of `refine` (from a :func:`functools.partial`).
 
     """
     from anndata.acc import A, AdRef
@@ -164,9 +168,9 @@ def bbknn(
 
     params: BbknnParams = dict(
         n_neighbors=n_neighbors,
-        search=_name("sklearn" if search is None else search),
-        **({} if refine is None else dict(refine=_name(refine))),
-        metric=getattr(transformer, "metric", None),
+        **_described("search", "sklearn" if search is None else search, transformer),
+        **_described("refine", refine, refine_fn),
+        **_metric(transformer),
         **_use_to_uns(use, rep=True),
         batch=_ref_to_uns(batch, labels),
         neighbors_within_batch=neighbors_within_batch,

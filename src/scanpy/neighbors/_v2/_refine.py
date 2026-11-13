@@ -10,6 +10,8 @@ from fast_array_utils.numba import njit
 from scipy import sparse
 
 if TYPE_CHECKING:
+    from typing import Literal
+
     from numpy.typing import NDArray
 
     from ..._compat import CSRBase
@@ -17,14 +19,35 @@ if TYPE_CHECKING:
 __all__ = ["binary", "gauss", "phenograph", "seurat", "umap"]
 
 
-def umap(d: CSRBase, /) -> CSRBase:
+def umap(
+    d: CSRBase,
+    /,
+    *,
+    local_connectivity: float = 1.0,
+    set_op_mix_ratio: float = 1.0,
+    apply_set_operations: bool = True,
+) -> CSRBase:
     """Fuzzy simplicial set :cite:p:`McInnes2018`.
 
     For an observation with k neighbors, this is `umap.umap_.fuzzy_simplicial_set`
-    with `n_neighbors=k + 1` and `local_connectivity=1`.
+    with `n_neighbors=k + 1`.
+
+    Parameters
+    ----------
+    d
+        kNN distances.
+    local_connectivity
+        Number of nearest neighbors that each observation is assumed to be connected to
+        with weight 1, interpolated if fractional.
+    set_op_mix_ratio
+        Combine both directions of an edge by their fuzzy union (1),
+        their fuzzy intersection (0), or a mix of both.
+    apply_set_operations
+        Combine both directions of an edge. If `False`, the graph is directed.
     """
     dist = d.data.astype(np.float64)
-    rho, sigma = _rho_sigma(d.indptr, dist, dist.sum() / (d.nnz + d.shape[0]))
+    mean_dist = dist.sum() / (d.nnz + d.shape[0])
+    rho, sigma = _rho_sigma(d.indptr, dist, mean_dist, local_connectivity)
 
     # weights of each observation’s edges
     row = d.tocoo().row
@@ -32,29 +55,43 @@ def umap(d: CSRBase, /) -> CSRBase:
         (np.exp(-np.maximum(dist - rho[row], 0) / sigma[row]), d.indices, d.indptr),
         shape=d.shape,
     )
+    if not apply_set_operations:
+        return w
 
-    # fuzzy union of both directions
-    return w + w.T - w.multiply(w.T)
+    # mix of fuzzy union and fuzzy intersection of both directions
+    both = w.multiply(w.T)
+    return set_op_mix_ratio * (w + w.T - both) + (1 - set_op_mix_ratio) * both
 
 
 @njit
 def _rho_sigma(
-    indptr: NDArray[np.integer], dist: NDArray[np.float64], mean_dist: float
+    indptr: NDArray[np.integer],
+    dist: NDArray[np.float64],
+    mean_dist: float,
+    local_connectivity: float,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Get each row’s distance to its nearest neighbor that isn’t a duplicate, and its width.
+    """Get each row’s distance to its nearest neighbors that aren’t duplicates, and its width.
+
+    The distance rho is to the `local_connectivity`-th such neighbor, interpolated if fractional.
 
     The width sigma solves `sum(exp(-(dist - rho) / sigma)) = log2(k + 1)`
     and is at least `1e-3` times the mean distance, counting the observation itself.
     """
     n = len(indptr) - 1
     rho, sigma = np.zeros(n), np.ones(n)
+    index = int(np.floor(local_connectivity))
+    fraction = local_connectivity - index
     for i in numba.prange(n):
         dist_i = dist[indptr[i] : indptr[i + 1]]
 
-        # rho: distance to the nearest neighbor that isn’t a duplicate
+        # rho: distance to the `local_connectivity`-th nearest neighbor that isn’t a duplicate
         positive = dist_i[dist_i > 0]
-        if len(positive):
-            rho[i] = positive.min()
+        if len(positive) >= local_connectivity:
+            lower = positive[index - 1] if index > 0 else 0.0
+            upper = positive[index] if fraction > 1e-5 else lower
+            rho[i] = lower + fraction * (upper - lower)
+        elif len(positive):
+            rho[i] = positive[-1]
 
         # sigma: bisection
         excess = np.maximum(dist_i - rho[i], 0.0)
@@ -103,11 +140,21 @@ def gauss(d: CSRBase, /) -> CSRBase:
     return w.maximum(w.T)
 
 
-def phenograph(d: CSRBase, /) -> CSRBase:
+def phenograph(
+    d: CSRBase, /, *, symmetrize: Literal["mean", "product"] | None = "mean"
+) -> CSRBase:
     """Jaccard index of the neighbor sets along each edge, as in PhenoGraph :cite:p:`Levine2015`.
 
     The observation itself is not part of its neighbor set.
-    Both directions of an edge are averaged.
+
+    Parameters
+    ----------
+    d
+        kNN distances.
+    symmetrize
+        Combine both directions of an edge by their mean,
+        or by their product (PhenoGraph’s `prune=True`), keeping only mutual neighbors.
+        If `None`, the graph is directed.
     """
     a = _pattern(d)
     row, size = a.tocoo().row, np.diff(a.indptr)
@@ -118,8 +165,17 @@ def phenograph(d: CSRBase, /) -> CSRBase:
     w.data = shared / (size[row] + size[a.indices] - shared)
     w.eliminate_zeros()
 
-    # average both directions
-    return (w + w.T) / 2
+    # combine both directions
+    match symmetrize:
+        case "mean":
+            return (w + w.T) / 2
+        case "product":
+            return w.multiply(w.T)
+        case None:
+            return w
+        case _:
+            msg = f"`symmetrize` needs to be 'mean', 'product', or None, got {symmetrize!r}."
+            raise ValueError(msg)
 
 
 def seurat(d: CSRBase, /, *, prune: float = 1 / 15) -> CSRBase:

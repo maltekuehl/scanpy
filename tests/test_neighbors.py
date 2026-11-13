@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import anndata
@@ -13,7 +14,7 @@ from sklearn.neighbors import KNeighborsTransformer, RadiusNeighborsTransformer
 import scanpy as sc
 from scanpy import Neighbors
 from scanpy._compat import CSBase
-from scanpy.neighbors import search
+from scanpy.neighbors import refine, search
 from scanpy.neighbors._common import (
     _get_indices_distances_from_rect_matrix,
     _get_indices_distances_from_sparse_matrix,
@@ -591,3 +592,78 @@ def test_v2_refine_none() -> None:
         sc.pp.neighbors(adata, use="obsm.X_pca", refine=None)
     assert set(adata.obsp) == {"distances"}
     assert "connectivities_key" not in adata.uns["neighbors"]
+
+
+@needs.scanpy2
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(local_connectivity=2.5, set_op_mix_ratio=0.3),
+        dict(apply_set_operations=False),
+    ],
+)
+def test_v2_umap_options(kwargs: dict[str, object]) -> None:
+    """The options are those of `umap.umap_.fuzzy_simplicial_set`."""
+    from umap.umap_ import fuzzy_simplicial_set
+
+    x = pbmc68k_reduced().obsm["X_pca"]
+    k = 15
+    dist, idx = KNeighborsTransformer().fit(x).kneighbors(x, k + 1)
+    dist[:, 0] = 0  # the observation itself
+    expected = fuzzy_simplicial_set(
+        x, k + 1, None, "euclidean", knn_indices=idx, knn_dists=dist, **kwargs
+    )[0].toarray()
+    np.fill_diagonal(expected, 0)
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        res = sc.pp.neighbors(
+            AnnData(x),
+            use="X",
+            search=search.sklearn(k),
+            refine=partial(refine.umap, **kwargs),
+            out=True,
+        )
+    np.testing.assert_allclose(res.connectivities.toarray(), expected, atol=1e-5)
+
+
+@needs.scanpy2
+def test_v2_phenograph_symmetrize() -> None:
+    """Both directions of an edge are averaged or multiplied, or kept directed."""
+    adata = pbmc68k_reduced()
+    graphs = {}
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        for symmetrize in ["mean", "product", None]:
+            graphs[symmetrize] = sc.pp.neighbors(
+                adata,
+                use="obsm.X_pca",
+                refine=partial(refine.phenograph, symmetrize=symmetrize),
+                out=True,
+            )
+    directed = graphs[None].connectivities.toarray()
+    assert not directed[graphs[None].distances.toarray() == 0].any()
+    assert (directed != directed.T).any()
+    np.testing.assert_allclose(
+        graphs["mean"].connectivities.toarray(), (directed + directed.T) / 2, rtol=1e-6
+    )
+    np.testing.assert_allclose(
+        graphs["product"].connectivities.toarray(), directed * directed.T, rtol=1e-6
+    )
+
+
+@needs.scanpy2
+def test_v2_settings_in_uns(tmp_path: Path) -> None:
+    """The settings of `search` and of a partial `refine` are stored in `.uns`."""
+    adata = pbmc68k_reduced()
+    with sc.settings.override(preset=sc.Preset.ScanpyV2Preview):
+        sc.pp.neighbors(
+            adata,
+            use="obsm.X_pca",
+            search=search.sklearn(10, metric="cosine"),
+            refine=partial(refine.umap, local_connectivity=2),
+        )
+    params = adata.uns["neighbors"]["params"]
+    assert params["search"] == "sklearn.neighbors._graph.KNeighborsTransformer"
+    assert params["search_params"]["n_neighbors"] == 10
+    assert params["metric"] == params["search_params"]["metric"] == "cosine"
+    assert params["refine"] == "umap"
+    assert params["refine_params"] == dict(local_connectivity=2)
+    adata.write_h5ad(tmp_path / "adata.h5ad")
